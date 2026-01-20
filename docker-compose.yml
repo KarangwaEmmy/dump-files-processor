@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  dump_listener:
+    build: .
+    container_name: dump_listener
+    volumes:
+      # Host Dump directory (set HOST_DUMP_DIR env var to override), default: ./Dump
+      - ${HOST_DUMP_DIR:-./Dump}:/app/Dump
+      - ${HOST_LOGS_DIR:-./logs}:/app/logs
+    environment:
+      - DUMP_DIR=/app/Dump
+    restart: always
