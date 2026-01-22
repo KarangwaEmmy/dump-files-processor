@@ -9,4 +9,9 @@ services:
       - ${HOST_LOGS_DIR:-./logs}:/app/logs
     environment:
       - DUMP_DIR=/app/Dump
+      - API_LOGIN_URL=${API_LOGIN_URL}
+      - API_URL=${API_URL}
+      - API_EMAIL=${API_EMAIL}
+      - API_PASSWORD=${API_PASSWORD}
+      - API_TIMEOUT=${API_TIMEOUT}
     restart: always

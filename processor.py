@@ -96,6 +96,29 @@ def _move_to_processed(src_path, reason=None):
         logging.exception(f"Failed to move {src_path} to processed folder")
 
 
+def _move_to_appointment(src_path, reason=None):
+    """Move file to Appointment folder keeping the original filename."""
+    src = Path(src_path)
+    appointment_folder = DUMP_FOLDER / "Appointment"
+
+    try:
+        appointment_folder.mkdir(parents=True, exist_ok=True)
+
+        # Preserve original filename (no timestamp prefix)
+        dest = appointment_folder / src.name
+
+        try:
+            src.rename(dest)
+        except OSError:
+            # fallback across filesystems
+            shutil.move(str(src), str(dest))
+
+        step(f"File moved to Appointment folder: {dest.name}")
+        logging.info(f"File moved to Appointment folder: {dest}")
+    except Exception:
+        logging.exception(f"Failed to move {src_path} to Appointment folder")
+
+
 def _process_single(file_path):
     try:
         step(f"Processing file: {file_path}")
@@ -119,7 +142,7 @@ def _process_single(file_path):
         ref_time = inspection_time_raw or time.strftime("%H%M%S")
         inspection_ref = f"MAHA-{ref_date}-{ref_time}".replace(':', '')
 
-        # try to create ISO datetime for inspectionDate
+        # try to create ISO datetime for inspectionDate (ISO 8601 with timezone)
         try:
             # attempt common formats: YYYYMMDD and HH:MM or HHMMSS
             if inspection_date_raw and len(inspection_date_raw) == 8:
@@ -136,13 +159,19 @@ def _process_single(file_path):
                         hh = t[0:2]
                         mm = t[2:4]
                         ss = t[4:6] if len(t) >= 6 else '00'
-                    inspection_iso = f"{y}-{m}-{d}T{hh}:{mm}:{ss}Z"
+                    inspection_iso = f"{y}-{m}-{d}T{hh}:{mm}:{ss}.000Z"
                 else:
-                    inspection_iso = f"{y}-{m}-{d}T00:00:00Z"
+                    inspection_iso = f"{y}-{m}-{d}T00:00:00.000Z"
             else:
-                inspection_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                inspection_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
         except Exception:
-            inspection_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            inspection_iso = time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        # Try to convert chassis number to integer (handles decimal strings like "0.000")
+        try:
+            chassis_no_value = int(float(chassis_no)) if chassis_no else 0
+        except (ValueError, TypeError):
+            chassis_no_value = 0
 
         payload = {
             "inspectionReference": inspection_ref,
@@ -151,29 +180,34 @@ def _process_single(file_path):
             "inspectorName": inspector_name or "Unknown",
             "inspectionTime": inspection_time_raw or "",
             "plateNumber": plate,
-            "ChassisNo": chassis_no,
+            "chassisNo": chassis_no_value,
             "manufacturer": manufacturer,
-            "vehicleYype": vehicle_type,
-            "axleCount": int(axle_count) if axle_count and axle_count.isdigit() else axle_count,
-            "laneNumber": lane_number,
+            "vehicleType": vehicle_type,
+            "axleCount": int(float(axle_count)) if axle_count else None,
+            "laneNumber": str(lane_number) if lane_number else "",
             "overallResult": "PASS",
             "inspectionResults": []
         }
 
         # populate inspectionResults from available codes
+        # EXCLUDE Vehicle Identification codes (those are in top-level fields)
         for code, meta in MAHA_CODE_MAPPING.items():
+            # Skip Vehicle Identification category - those are already in payload top-level fields
+            if meta.get("category") == "Vehicle Identification":
+                continue
+                
             if code in data and data[code] not in (None, ""):
                 raw = data[code]
-                # try numeric conversion
-                value = raw
+                # try numeric conversion, skip if not numeric
+                value = None
                 try:
-                    if '.' in raw:
+                    if '.' in str(raw):
                         value = float(raw)
                     else:
                         value = int(raw)
-                except Exception:
-                    # keep as string
-                    value = raw
+                except (ValueError, TypeError):
+                    # Skip non-numeric values - API expects integer
+                    continue
 
                 payload["inspectionResults"].append({
                     "code": code,
@@ -186,28 +220,39 @@ def _process_single(file_path):
         # Try sending to API with retries; only move file on success
         max_attempts = 3
         attempt = 0
-        sent = False
-        while attempt < max_attempts and not sent:
+        api_result = None
+        while attempt < max_attempts and api_result is None:
             attempt += 1
             try:
-                sent = send_to_api(payload)
-                if not sent:
-                    step(f"Attempt {attempt}: send_to_api returned False")
+                # send_to_api now returns (success, response_text)
+                api_result = send_to_api(payload)
+                if not api_result[0]:  # Check if success flag is False
+                    step(f"Attempt {attempt}: API returned error - {api_result[1][:100]}")
             except Exception:
                 logging.exception(f"send_to_api raised exception on attempt {attempt}")
-                sent = False
+                api_result = None
 
-            if not sent and attempt < max_attempts:
+            if api_result is None and attempt < max_attempts:
                 time.sleep(1)
 
-        if sent:
-            # Move file to processed folder
+        if api_result and api_result[0]:
+            # Success - move file to processed folder
             _move_to_processed(file_path)
             step(f"Processing completed successfully: {file_path}")
             return True
+        elif api_result:
+            # API returned an error - check if it's an appointment error
+            response_text = api_result[1]
+            if "No validated appointment found for plate number" in response_text:
+                step(f"Appointment validation error - moving to Appointment folder")
+                _move_to_appointment(file_path)
+                logging.warning(f"Appointment error for file {file_path}: {response_text}")
+                return True  # Treat as handled success (file moved to Appointment folder)
+            else:
+                step(f"Failed to send data to API after {max_attempts} attempts: {file_path}")
+                # Fallthrough to generic failure handling
         else:
             step(f"Failed to send data to API after {max_attempts} attempts: {file_path}")
-            # fallthrough to failure handling below
 
     except Exception as e:
         step(f"Failed to process {file_path}: {e}")
