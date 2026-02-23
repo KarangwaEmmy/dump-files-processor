@@ -24,7 +24,7 @@ def send_to_api(payload):
         if not api_url:
             step("API_URL not configured in environment")
             logging.error("API_URL environment variable not set")
-            return False
+            return (False, "API_URL environment variable not set")
         
         # Ensure we have a valid token before attempting to send
         if not get_valid_token():
@@ -69,7 +69,7 @@ def send_to_api(payload):
                 )
             else:
                 step("Re-authentication failed")
-                return False
+                return (False, "Re-authentication failed")
         
         # Check for success
         if response.status_code in (200, 201, 202):
