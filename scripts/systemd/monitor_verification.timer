@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Dump Listener monitor verification daily
+
+[Timer]
+# Daily at 02:00 (UTC/local depending on systemd configuration)
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

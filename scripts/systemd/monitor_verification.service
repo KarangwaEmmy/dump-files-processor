@@ -1,0 +1,14 @@
+[Unit]
+Description=Dump Listener - Monitor Verification (one-shot)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ekarangw/dump_listener
+# Optional environment files (edit to include SMTP/webhook settings)
+EnvironmentFile=/etc/default/dump_listener_monitor
+EnvironmentFile=/home/ekarangw/dump_listener/scripts/monitor.env
+ExecStart=/home/ekarangw/dump_listener/.venv/bin/python /home/ekarangw/dump_listener/scripts/monitor_verification.py
+
+[Install]
+WantedBy=multi-user.target
