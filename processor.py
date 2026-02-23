@@ -97,23 +97,28 @@ def _move_to_processed(src_path, reason=None):
 
 
 def _move_to_appointment(src_path, reason=None):
-    """Move file to Appointment folder keeping the original filename."""
+    """Move file to Appointment folder with timestamp_filename format.
+    
+    Example: 2026-01-22_10-30-45_test_vehicle.txt
+    """
     src = Path(src_path)
     appointment_folder = DUMP_FOLDER / "Appointment"
-
+    
     try:
         appointment_folder.mkdir(parents=True, exist_ok=True)
-
-        # Preserve original filename (no timestamp prefix)
-        dest = appointment_folder / src.name
-
+        
+        # Create timestamp_filename format: YYYY-MM-DD_HH-MM-SS_originalname.txt
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        dest_name = f"{timestamp}_{src.stem}.txt"
+        dest = appointment_folder / dest_name
+        
         try:
             src.rename(dest)
         except OSError:
             # fallback across filesystems
             shutil.move(str(src), str(dest))
-
-        step(f"File moved to Appointment folder: {dest.name}")
+        
+        step(f"File moved to Appointment folder: {dest_name}")
         logging.info(f"File moved to Appointment folder: {dest}")
     except Exception:
         logging.exception(f"Failed to move {src_path} to Appointment folder")
